@@ -1,0 +1,443 @@
+---
+title: "Analysis_1st"
+author: "Ryuta"
+date: "2026-01-05"
+output: html_document
+---
+
+# 目的
+
+熱交換器の
+
+```{r install_packages, message=FALSE, warning=FALSE, include=FALSE, cache=TRUE}
+## 環境構築
+install.packages("pacman")
+install.packages("GGally")
+install.packages("ggplot2")
+install.packages("e1071")
+install.packages("readxl")
+install.packages("gt")
+```
+
+## ロード
+
+```{r echo=FALSE}
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(lubridate) # 日付計算（%m-% や months()）のために必要
+library(gt)
+knitr::opts_chunk$set(echo=FALSE) # 全てのコードチャンクに適用されるオプション
+```
+
+## 使用データ
+
+```{r}
+df_raw <- read_xlsx("data/20251210_u_value.xlsx", sheet = 1, guess_max = 3000)
+df_raw <- df_raw |>
+  filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00"))
+df_Stuck <- read_xlsx("data/NoS_20251201.xlsx", sheet = 1)
+df_Stuck <- df_Stuck |> filter(Period != "2502")
+```
+
+## データ読み込み
+
+### 時系列データ
+
+```{r, echo=FALSE}
+library(DT)
+datatable(df_raw)
+```
+
+### 詰まりデータ
+
+```{r}
+library(DT)
+datatable(df_Stuck)
+```
+
+## データ概要
+
+### U
+
+## データ加工part1
+
+生データからキャンペーン別に前後一か月間（洗浄前、洗浄後）の最大値を取得
+
+### Case1) UA
+
+#### 1. キャンペーン毎の末尾のデータから最大値を取得
+
+```{r U from Last, echo=FALSE}
+df_end_u <- df_raw |>
+  filter(!is.na(U)) |>
+  group_by(Period) |> # 期間別にグループ化
+  filter(
+    # 最終日 (max(Date)) から1か月前までの期間に絞り込む
+    Timestamp >= (max(Timestamp) %m-% months(1)) & Timestamp <= max(Timestamp)
+  ) |>
+  summarize(
+    # X列の最大値を取得 (データがない場合は NA を返すように処理)
+    Max_U = if_else(
+      all(is.na(U)), 
+      NA_real_, 
+      max(U, na.rm = TRUE)
+    ),
+    # 基準となった日付を記録 (最終日)
+    Reference_Date = max(Timestamp)
+  ) |>
+  mutate(
+    Type = "End" # 終了日基準であることを示す列を追加
+  )
+df_end_u %>% head()
+```
+
+#### 2. キャンペーン毎の頭のデータから最大値を取得
+
+```{r echo=FALSE}
+df_beginning_u <- df_raw |>
+  filter(!is.na(U)) |>
+  group_by(Period) |> # 期間別にグループ化
+  filter(
+    # 最初の日 (min(Date)) から1か月後までの期間に絞り込む
+    Timestamp >= min(Timestamp) & Timestamp <= (min(Timestamp) %m+% months(1))
+  ) |>
+  summarize(
+    # X列の最大値を取得 (データがない場合は NA を返すように処理)
+    Max_U = if_else(
+      all(is.na(U)), 
+      NA_real_, 
+      max(U, na.rm = TRUE)
+    ),
+    # 基準となった日付を記録 (最初の日)
+    Reference_Date = min(Timestamp),
+    .groups = 'drop'
+  ) |>
+  mutate(
+    Type = "Beginning" # 開始日基準であることを示す列を追加
+  )
+df_beginning_u %>% head()
+```
+
+#### 3. 結合 キャンペーン毎の最大値（初期、末期）を抽出したものを結合した
+
+```{r}
+df_outcome_u <- bind_rows(df_end_u, df_beginning_u)
+df_outcome_u
+```
+
+#### 4. UA列の追加
+
+```{r}
+df_outcome_u$UA <- df_outcome_u$Max_U * 367
+df_outcome_u
+```
+
+#### 5. 結合キーの作成
+
+キャンペーン時期とタイプ列（前後）を結合
+
+```{r}
+df_outcome_u <- df_outcome_u |>
+  mutate(
+    PeriodType = str_c(Period, Type, sep = "_")
+  )
+```
+
+```{r, echo=FALSE}
+library(DT)
+datatable(df_outcome_u)
+```
+
+### Case2) ジャケット圧
+
+#### 1. キャンペーン毎の末尾のデータから最大値を取得
+
+```{r jacketP from Last, echo=FALSE}
+df_end_jacket <- df_raw |>
+  filter(!is.na(jacket_P)) |>
+  group_by(Period) |> # 期間別にグループ化
+  filter(
+    # 最終日 (max(Date)) から1か月前までの期間に絞り込む
+    Timestamp >= (max(Timestamp) %m-% months(1)) & Timestamp <= max(Timestamp)
+  ) |>
+  summarize(
+    # X列の最大値を取得 (データがない場合は NA を返すように処理)
+    Max_jacketp = if_else(
+      all(is.na(jacket_P)), 
+      NA_real_, 
+      max(jacket_P, na.rm = TRUE)
+    ),
+    # 基準となった日付を記録 (最終日)
+    Reference_Date = max(Timestamp)
+  ) |>
+  mutate(
+    Type = "End" # 終了日基準であることを示す列を追加
+  )
+df_end_jacket %>% head()
+```
+
+#### 2. キャンペーン毎の頭のデータから最大値を取得
+
+```{r echo=FALSE}
+df_beginning_jacket <- df_raw |>
+  filter(!is.na(jacket_P)) |>
+  group_by(Period) |> # 期間別にグループ化
+  filter(
+    # 最初の日 (min(Date)) から1か月後までの期間に絞り込む
+    Timestamp >= min(Timestamp) & Timestamp <= (min(Timestamp) %m+% months(1))
+  ) |>
+  summarize(
+    # X列の最大値を取得 (データがない場合は NA を返すように処理)
+    Max_jacketp = if_else(
+      all(is.na(jacket_P)), 
+      NA_real_, 
+      max(jacket_P, na.rm = TRUE)
+    ),
+    # 基準となった日付を記録 (最初の日)
+    Reference_Date = min(Timestamp),
+    .groups = 'drop'
+  ) |>
+  mutate(
+    Type = "Beginning" # 開始日基準であることを示す列を追加
+  )
+df_beginning_jacket %>% head()
+```
+
+#### 3. 結合 キャンペーン毎の最大値（初期、末期）を抽出したものを結合した
+
+```{r outcome_jacketP, echo=FALSE}
+df_outcome_jacketp <- bind_rows(df_end_jacket, df_beginning_jacket)
+df_outcome_jacketp
+```
+
+#### 4. 結合キーの作成
+
+キャンペーン時期とタイプ列（前後）を結合
+
+```{r}
+df_outcome_jacketp <- df_outcome_jacketp |>
+  mutate(
+    PeriodType = str_c(Period, Type, sep = "_")
+  )
+```
+
+### Case3) ポンプ圧
+
+#### 1.  キャンペーン毎の末尾のデータから最大値を取得
+
+```{r pumpP from Last, echo=FALSE}
+df_end <- df_raw |>
+  filter(!is.na(pump_outlet)) |>
+  group_by(Period) |> # 期間別にグループ化
+  filter(
+    # 最終日 (max(Date)) から1か月前までの期間に絞り込む
+    Timestamp >= (max(Timestamp) %m-% months(1)) & Timestamp <= max(Timestamp)
+  ) |>
+  summarize(
+    # X列の最大値を取得 (データがない場合は NA を返すように処理)
+    Max_P = if_else(
+      all(is.na(pump_outlet)), 
+      NA_real_, 
+      max(pump_outlet, na.rm = TRUE)
+    ),
+    # 基準となった日付を記録 (最終日)
+    Reference_Date = max(Timestamp)
+  ) |>
+  mutate(
+    Type = "End" # 終了日基準であることを示す列を追加
+  )
+df_end %>% head()
+```
+
+#### 2.  キャンペーン毎の頭のデータから最大値を取得
+
+```{r echo=FALSE}
+df_beginning <- df_raw |>
+  group_by(Period) |> # 期間別にグループ化
+  filter(
+    # 最初の日 (min(Date)) から1か月後までの期間に絞り込む
+    Timestamp >= min(Timestamp) & Timestamp <= (min(Timestamp) %m+% months(1))
+  ) |>
+  summarize(
+    # X列の最大値を取得 (データがない場合は NA を返すように処理)
+    Max_P = if_else(
+      all(is.na(pump_outlet)), 
+      NA_real_, 
+      max(pump_outlet, na.rm = TRUE)
+    ),
+    # 基準となった日付を記録 (最初の日)
+    Reference_Date = min(Timestamp),
+    .groups = 'drop'
+  ) |>
+  mutate(
+    Type = "Beginning" # 開始日基準であることを示す列を追加
+  )
+df_beginning %>% head()
+```
+
+#### 3.  結合 キャンペーン毎の最大値（初期、末期）を抽出したものを結合した
+
+```{r outcome_pumpp, echo=FALSE}
+df_outcome_pumpp <- bind_rows(df_end, df_beginning)
+df_outcome_pumpp
+```
+
+#### 4. 結合キーの作成
+
+キャンペーン時期とタイプ列（前後）を結合
+
+```{r}
+df_outcome_pumpp <- df_outcome_pumpp |>
+  mutate(
+    PeriodType = str_c(Period, Type, sep = "_")
+  )
+```
+
+## データ加工Part2
+
+詰まり本数データを結合(Left Join)する。
+
+### Case1) UA
+
+#### 1. 詰まりデータに結合キーを追加
+
+```{r}
+df_Stuck <- df_Stuck |>
+  mutate(
+    PeriodType = str_c(Period, `b/e`, sep = "_")
+  )
+```
+
+#### 2. 時系列データ(加工済)に詰まりデータを結合
+
+```{r}
+df_final_u <- left_join(df_outcome_u, df_Stuck, by = "PeriodType") |> filter(!is.na(NoS))
+library(DT)
+datatable(df_final_u)
+```
+
+### Case2) ジャケット圧
+
+#### 1. 詰まりデータに結合キーを追加
+
+Case1で済
+
+#### 2. 時系列データ(加工済)に詰まりデータを結合
+
+```{r}
+df_final_jacketp <- left_join(df_outcome_jacketp, df_Stuck, by = "PeriodType") |> filter(!is.na(NoS))
+library(DT)
+datatable(df_final_jacketp)
+```
+
+### Case3) ポンプ圧
+
+#### 1. 詰まりデータに結合キーを追加
+
+Case1で済
+
+#### 2. 時系列データ(加工済)に詰まりデータを結合
+
+```{r}
+df_final_pumpp <- left_join(df_outcome_pumpp, df_Stuck, by = "PeriodType") |> filter(!is.na(NoS))
+library(DT)
+datatable(df_final_pumpp)
+```
+
+## 可視化
+
+詰まり本数に対する各変数(UA, ジャケット圧, ポンプ圧)との相関を可視化
+
+### Case1) UA
+
+```{r}
+df_final_u |>
+  ggplot(aes(x = UA, y = NoS)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") + 
+  # 全データにラベルを表示
+  geom_text(aes(label = PeriodType), 
+            vjust = -1,    # 点の少し上に表示
+            size = 3.5,    # 文字サイズ
+            check_overlap = FALSE) + # すべて表示するためにFALSEに設定
+  labs(x = "UA", y = "NoS") +
+  theme_bw() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  ) +
+  # ラベルがグラフ上部で見切れないようにy軸の範囲を少し広げる調整（必要に応じて）
+  expand_limits(y = max(df_final_u$NoS) * 1.1)
+```
+
+```{r}
+x <- as.matrix(df_final_u |> select(UA))
+y <- as.matrix(df_final_u |> select(NoS))
+reg <- lm(y ~ x)
+reg
+summary(reg)
+```
+
+### Case2) ジャケット圧
+
+```{r}
+df_final_jacketp |>
+  ggplot(aes(x = Max_jacketp, y = NoS)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") + 
+  # 全データにラベルを表示
+  geom_text(aes(label = PeriodType), 
+            vjust = -1,    # 点の少し上に表示
+            size = 3.5,    # 文字サイズ
+            check_overlap = FALSE) + # すべて表示するためにFALSEに設定
+  labs(x = "JacketP", y = "NoS") +
+  theme_bw() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  ) +
+  # ラベルがグラフ上部で見切れないようにy軸の範囲を少し広げる調整（必要に応じて）
+  expand_limits(y = max(df_final_jacketp$NoS) * 1.1)
+
+```
+
+```{r}
+x <- as.matrix(df_final_jacketp |> select(Max_jacketp))
+y <- as.matrix(df_final_jacketp |> select(NoS))
+reg <- lm(y ~ x)
+reg
+summary(reg)
+```
+
+### Case3) ポンプ圧
+
+```{r}
+df_final_pumpp |>
+  ggplot(aes(x = Max_P, y = NoS)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") + 
+  # 全データにラベルを表示
+  geom_text(aes(label = PeriodType), 
+            vjust = -1,    # 点の少し上に表示
+            size = 3.5,    # 文字サイズ
+            check_overlap = FALSE) + # すべて表示するためにFALSEに設定
+  labs(x = "Max_P", y = "NoS") +
+  theme_bw() +
+  theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  ) +
+  # ラベルがグラフ上部で見切れないようにy軸の範囲を少し広げる調整（必要に応じて）
+  expand_limits(y = max(df_final_pumpp$NoS) * 1.1)
+```
+
+```{r}
+x <- as.matrix(df_final_pumpp |> select(Max_P))
+y <- as.matrix(df_final_pumpp |> select(NoS))
+reg <- lm(y ~ x)
+reg
+summary(reg)
+```
+
+### 評価

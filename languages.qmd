@@ -1,0 +1,134 @@
+---
+title: "Languages spoken at home in the United States"
+format: html
+editor: visual
+---
+
+```{r}
+#| include: false
+library(tidyverse)
+
+path_data <- "data/languages.csv"
+
+# Color palette for plots
+pal <- c(
+  "#447099",
+  "#EE6331",
+  "#404041",
+  "#419599",
+  "#72994E",
+  "#9A4665"
+)
+```
+
+```{r}
+#| message: false
+languages <- read_csv(path_data) 
+```
+
+## Explore
+
+`glimpse()`, from the dplyr package, provides a high-level overview of the data set.
+
+```{r}
+glimpse(languages)
+```
+
+The following code shows us the total number of at-home speakers of each language, sorted by the number of speakers. Page through the output to see the totals for other languages.
+
+```{r}
+languages |>
+  group_by(language) |>
+  summarize(total = sum(speakers, na.rm = TRUE)) |>
+  arrange(desc(total))
+```
+
+Spanish has the most at-home speakers of any non-English language.
+
+## Top languages spoken in MA
+
+Spanish, Portuguese, and Chinese are the most common non-English languages spoken in Massachusetts. You can edit the code inside `filter()` to visualize a different state.
+
+```{r}
+languages |>
+  filter(state == "Massachusetts") |> # Edit this line to explore a different state
+  mutate(language = fct_reorder(language, percent, .desc = TRUE)) |>
+  slice_max(percent, n = 9) |>
+  ggplot(aes(language, percent)) +
+  geom_col(fill = pal[[1]]) +
+  theme_minimal()
+```
+
+How does Massachusetts compare to Connecticut?
+
+```{r}
+languages |>
+  filter(state %in% c("Massachusetts", "Connecticut")) |> # Edit this line to compare other states
+  mutate(language = fct_reorder(language, percent, .desc = TRUE)) |>
+  slice_max(percent, n = 9) |>
+  ggplot(aes(language, percent, fill = state)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = pal[1:2]) +
+  theme_minimal() +
+  labs(title = "Languages spoken at home in CT and MA")
+```
+
+### States where Tagalog is spoken most commonly
+
+```{r}
+languages |> 
+  filter(language == "Tagalog") |> # Edit this line to explore a different language
+  slice_max(order_by = percent, n = 10) |> 
+  mutate(state = fct_reorder(state, percent, .desc = TRUE)) |> 
+  ggplot(aes(state, percent)) +
+  geom_col(fill = pal[[1]]) +
+  theme_minimal() +
+  labs(title = "Tagalog speakers by state")
+```
+
+## Most common language by state
+
+In 47 states, Spanish is the most common non-English language spoken at home.
+
+```{r}
+languages |> 
+  group_by(state) |> 
+  filter(speakers == max(speakers)) |> 
+  ungroup() |> 
+  count(language, sort = TRUE) |> 
+  rename(`Most common language` = language)
+```
+
+The only states where Spanish is not the most common language spoken are Alaska, Hawaii, Maine, and Vermont.
+
+```{r}
+languages |> 
+  group_by(state) |> 
+  filter(speakers == max(speakers)) |> 
+  ungroup() |> 
+  filter(language != "Spanish")
+```
+
+Two of these states (Alaska and Hawaii) states have multiple official languages:
+
+-   Hawaii: English and Hawaiian (included in "Ilocano, Samoan, Hawaiian, or other Austronesian languages")
+
+-   Alaska: English and 20 Alaska Native languages, including Yup'ik and Inupiaq (included in "Other Native languages of North America")
+
+## Maine and Vermont
+
+Maine and Vermont both have a relatively large proportion of French speakers. Other common languages include German, Spanish, and Chinese.
+
+```{r}
+languages |> 
+  filter(
+    state %in% c("Maine", "Vermont"),
+    language %in% c("German", "Spanish", "Chinese", "French") 
+  ) |> 
+  ggplot(aes(language, percent, fill = state)) +
+  geom_col() +
+  scale_fill_manual(values = pal[1:2]) +
+  facet_wrap(vars(state)) +
+  guides(fill = "none") +
+  theme_minimal()
+```
