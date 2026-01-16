@@ -17,6 +17,7 @@ install.packages("ggplot2")
 install.packages("e1071")
 install.packages("readxl")
 install.packages("gt")
+install.packages("ggpubr")
 ```
 
 ## ロード
@@ -27,6 +28,7 @@ library(readxl)
 library(dplyr)
 library(lubridate) # 日付計算（%m-% や months()）のために必要
 library(gt)
+library(ggpubr)
 knitr::opts_chunk$set(echo=FALSE) # 全てのコードチャンクに適用されるオプション
 ```
 
@@ -312,7 +314,9 @@ df_Stuck <- df_Stuck |>
 #### 2. 時系列データ(加工済)に詰まりデータを結合
 
 ```{r}
-df_final_u <- left_join(df_outcome_u, df_Stuck, by = "PeriodType") |> filter(!is.na(NoS))
+df_final_u <- left_join(df_outcome_u, df_Stuck, by = "PeriodType") |>
+  filter(!is.na(NoS)) |>
+  mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
 library(DT)
 datatable(df_final_u)
 ```
@@ -326,7 +330,9 @@ Case1で済
 #### 2. 時系列データ(加工済)に詰まりデータを結合
 
 ```{r}
-df_final_jacketp <- left_join(df_outcome_jacketp, df_Stuck, by = "PeriodType") |> filter(!is.na(NoS))
+df_final_jacketp <- left_join(df_outcome_jacketp, df_Stuck, by = "PeriodType") |>
+  filter(!is.na(NoS)) |>
+  mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
 library(DT)
 datatable(df_final_jacketp)
 ```
@@ -340,7 +346,9 @@ Case1で済
 #### 2. 時系列データ(加工済)に詰まりデータを結合
 
 ```{r}
-df_final_pumpp <- left_join(df_outcome_pumpp, df_Stuck, by = "PeriodType") |> filter(!is.na(NoS))
+df_final_pumpp <- left_join(df_outcome_pumpp, df_Stuck, by = "PeriodType") |>
+  filter(!is.na(NoS)) |>
+  mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
 library(DT)
 datatable(df_final_pumpp)
 ```
@@ -353,14 +361,16 @@ datatable(df_final_pumpp)
 
 ```{r}
 df_final_u |>
-  ggplot(aes(x = UA, y = NoS)) +
+  ggplot(aes(x = UA, y = NoS, color = Time_Category)) +
   geom_point() +
-  geom_smooth(method = "lm", se = TRUE, color = "blue") + 
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") +
   # 全データにラベルを表示
   geom_text(aes(label = PeriodType), 
             vjust = -1,    # 点の少し上に表示
             size = 3.5,    # 文字サイズ
-            check_overlap = FALSE) + # すべて表示するためにFALSEに設定
+            check_overlap = FALSE,
+            show.legend = FALSE) + # すべて表示するためにFALSEに設定
   labs(x = "UA", y = "NoS") +
   theme_bw() +
   theme(
@@ -383,14 +393,16 @@ summary(reg)
 
 ```{r}
 df_final_jacketp |>
-  ggplot(aes(x = Max_jacketp, y = NoS)) +
+  ggplot(aes(x = Max_jacketp, y = NoS, color = Time_Category)) +
   geom_point() +
-  geom_smooth(method = "lm", se = TRUE, color = "blue") + 
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") +
   # 全データにラベルを表示
   geom_text(aes(label = PeriodType), 
             vjust = -1,    # 点の少し上に表示
             size = 3.5,    # 文字サイズ
-            check_overlap = FALSE) + # すべて表示するためにFALSEに設定
+            check_overlap = FALSE,
+            show.legend = FALSE) + # すべて表示するためにFALSEに設定
   labs(x = "JacketP", y = "NoS") +
   theme_bw() +
   theme(
@@ -414,14 +426,16 @@ summary(reg)
 
 ```{r}
 df_final_pumpp |>
-  ggplot(aes(x = Max_P, y = NoS)) +
+  ggplot(aes(x = Max_P, y = NoS, color = Time_Category)) +
   geom_point() +
-  geom_smooth(method = "lm", se = TRUE, color = "blue") + 
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") +
   # 全データにラベルを表示
   geom_text(aes(label = PeriodType), 
             vjust = -1,    # 点の少し上に表示
             size = 3.5,    # 文字サイズ
-            check_overlap = FALSE) + # すべて表示するためにFALSEに設定
+            check_overlap = FALSE,
+            show.legend = FALSE) + # すべて表示するためにFALSEに設定
   labs(x = "Max_P", y = "NoS") +
   theme_bw() +
   theme(
