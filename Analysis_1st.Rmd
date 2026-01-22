@@ -1,4 +1,4 @@
----
+f---
 title: "Analysis_1st"
 author: "Ryuta"
 date: "2026-01-05"
@@ -11,13 +11,13 @@ output: html_document
 
 ```{r install_packages, message=FALSE, warning=FALSE, include=FALSE, cache=TRUE}
 ## 環境構築
-install.packages("pacman")
-install.packages("GGally")
-install.packages("ggplot2")
-install.packages("e1071")
-install.packages("readxl")
-install.packages("gt")
-install.packages("ggpubr")
+install.packages("pacman", repos = "https://cloud.r-project.org")
+install.packages("GGally", repos = "https://cloud.r-project.org")
+install.packages("ggplot2", repos = "https://cloud.r-project.org")
+install.packages("e1071", repos = "https://cloud.r-project.org")
+install.packages("readxl", repos = "https://cloud.r-project.org")
+install.packages("gt", repos = "https://cloud.r-project.org")
+install.packages("ggpubr", repos = "https://cloud.r-project.org")
 ```
 
 ## ロード
