@@ -71,7 +71,7 @@ get_campaign_max <- function(df, target_col) {
 }
 
 # 分析・可視化を行う関数
-analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label) {
+analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label, param_name) {
   # 結合
   df_final <- left_join(df_outcome, df_stuck, by = "PeriodType") |>
     filter(!is.na(NoS)) |>
@@ -101,13 +101,40 @@ analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label) {
 
   print(p)
 
-  # 回帰分析
+  # 回帰分析 (全体)
   x_val <- as.matrix(df_final |> select(all_of(x_var)))
   y_val <- as.matrix(df_final |> select(NoS))
   reg <- lm(y_val ~ x_val)
   print(summary(reg))
 
-  return(invisible(df_final))
+  # 乖離幅の計算 (時期別)
+  stats_list <- list()
+
+  for (cat in unique(df_final$Time_Category)) {
+    df_sub <- df_final |> filter(Time_Category == cat)
+
+    if (nrow(df_sub) >= 3) {
+      # モデル作成
+      f <- as.formula(paste("NoS ~", x_var))
+      model <- lm(f, data = df_sub)
+
+      # 残差の最大値（絶対値）
+      resids <- residuals(model)
+      max_dev_val <- max(abs(resids))
+
+      # 全体本数(922本)に対する割合
+      pct_val <- (max_dev_val / 922) * 100
+
+      stats_list[[cat]] <- tibble(
+        Parameter = param_name,
+        Period = cat,
+        Max_Deviation = round(max_dev_val, 2),
+        Percentage_of_Total = round(pct_val, 2)
+      )
+    }
+  }
+
+  return(bind_rows(stats_list))
 }
 ```
 
@@ -185,6 +212,9 @@ dygraph(pump_xts, main = "Pump Outlet Pressure Trend") |>
 U値の最大値からUAを算出し、相関を確認する。
 
 ```{r}
+# 結果格納用リスト
+summary_results <- list()
+
 # 1. データ抽出
 df_outcome_u <- get_campaign_max(df_raw, "U")
 
@@ -193,7 +223,7 @@ df_outcome_u <- df_outcome_u |>
   mutate(UA = Max_Value * 367)
 
 # 3. 分析実行
-analyze_and_report(df_outcome_u, df_Stuck, "UA", "UA")
+summary_results[["UA"]] <- analyze_and_report(df_outcome_u, df_Stuck, "UA", "UA", "UA")
 ```
 
 ### Case2) ジャケット圧
@@ -205,7 +235,7 @@ analyze_and_report(df_outcome_u, df_Stuck, "UA", "UA")
 df_outcome_jacket <- get_campaign_max(df_raw, "jacket_P")
 
 # 2. 分析実行
-analyze_and_report(df_outcome_jacket, df_Stuck, "Max_Value", "JacketP")
+summary_results[["JacketP"]] <- analyze_and_report(df_outcome_jacket, df_Stuck, "Max_Value", "JacketP", "Jacket Pressure")
 ```
 
 ### Case3) ポンプ圧
@@ -217,9 +247,19 @@ analyze_and_report(df_outcome_jacket, df_Stuck, "Max_Value", "JacketP")
 df_outcome_pump <- get_campaign_max(df_raw, "pump_outlet")
 
 # 2. 分析実行
-analyze_and_report(df_outcome_pump, df_Stuck, "Max_Value", "Max_P")
+summary_results[["PumpP"]] <- analyze_and_report(df_outcome_pump, df_Stuck, "Max_Value", "Max_P", "Pump Pressure")
 ```
 
 ### 評価
 
 本分析の結果、各パラメータと詰まり本数の間に一定の相関傾向が確認された。特に2021年9月以前と以後で傾向に違いが見られるケースがあるため、時期を考慮した監視が重要であると考えられる。
+
+### 乖離幅の分析まとめ
+
+予測式との乖離幅が最も大きいプロットについて、全体本数（922本）に対する割合を以下に示す。
+
+```{r}
+final_summary <- bind_rows(summary_results)
+final_summary |>
+  datatable(caption = "Max Deviation and Percentage by Parameter and Period")
+```
