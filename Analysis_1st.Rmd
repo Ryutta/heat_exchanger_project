@@ -11,15 +11,13 @@ output: html_document
 
 ```{r install_packages, message=FALSE, warning=FALSE, include=FALSE, cache=TRUE}
 ## 環境構築
-install.packages("pacman")
-install.packages("GGally")
-install.packages("ggplot2")
-install.packages("e1071")
-install.packages("readxl")
-install.packages("gt")
-install.packages("ggpubr")
-install.packages("dygraphs")
-install.packages("xts")
+install.packages("pacman", repos = "https://cloud.r-project.org")
+install.packages("GGally", repos = "https://cloud.r-project.org")
+install.packages("ggplot2", repos = "https://cloud.r-project.org")
+install.packages("e1071", repos = "https://cloud.r-project.org")
+install.packages("readxl", repos = "https://cloud.r-project.org")
+install.packages("gt", repos = "https://cloud.r-project.org")
+install.packages("ggpubr", repos = "https://cloud.r-project.org")
 ```
 
 ## ロード
@@ -32,8 +30,6 @@ library(lubridate) # 日付計算（%m-% や months()）のために必要
 library(gt)
 library(ggpubr)
 library(DT)
-library(dygraphs)
-library(xts)
 knitr::opts_chunk$set(echo=FALSE) # 全てのコードチャンクに適用されるオプション
 ```
 
@@ -136,36 +132,6 @@ datatable(df_raw)
 
 ```{r}
 datatable(df_Stuck)
-```
-
-## パラメータ推移
-
-各運転パラメータの時系列推移を確認する。
-
-### U値
-
-```{r}
-# xtsオブジェクトへの変換
-ts_u <- xts(df_raw$U, order.by = df_raw$Timestamp)
-# プロット
-dygraph(ts_u, main = "U Value Trend") |>
-  dyRangeSelector()
-```
-
-### ジャケット圧
-
-```{r}
-ts_jacket <- xts(df_raw$jacket_P, order.by = df_raw$Timestamp)
-dygraph(ts_jacket, main = "Jacket Pressure Trend") |>
-  dyRangeSelector()
-```
-
-### ポンプ圧
-
-```{r}
-ts_pump <- xts(df_raw$pump_outlet, order.by = df_raw$Timestamp)
-dygraph(ts_pump, main = "Pump Outlet Pressure Trend") |>
-  dyRangeSelector()
 ```
 
 ## データ加工と分析
