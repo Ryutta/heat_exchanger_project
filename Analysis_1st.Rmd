@@ -18,6 +18,8 @@ install.packages("e1071", repos = "https://cloud.r-project.org")
 install.packages("readxl", repos = "https://cloud.r-project.org")
 install.packages("gt", repos = "https://cloud.r-project.org")
 install.packages("ggpubr", repos = "https://cloud.r-project.org")
+install.packages("dygraphs", repos = "https://cloud.r-project.org")
+install.packages("xts", repos = "https://cloud.r-project.org")
 ```
 
 ## ロード
@@ -30,6 +32,8 @@ library(lubridate) # 日付計算（%m-% や months()）のために必要
 library(gt)
 library(ggpubr)
 library(DT)
+library(dygraphs)
+library(xts)
 knitr::opts_chunk$set(echo=FALSE) # 全てのコードチャンクに適用されるオプション
 ```
 
@@ -132,6 +136,44 @@ datatable(df_raw)
 
 ```{r}
 datatable(df_Stuck)
+```
+
+## パラメータ推移
+
+各パラメータ（U値、ジャケット圧、ポンプ圧）の推移を時系列グラフで確認する。
+
+### U値
+
+```{r}
+# 欠損値を除去してxtsオブジェクトを作成（可視化のため）
+df_u <- df_raw |> select(Timestamp, U) |> filter(!is.na(U))
+u_xts <- xts(df_u$U, order.by = df_u$Timestamp)
+
+dygraph(u_xts, main = "U Value Trend") |>
+  dyRangeSelector() |>
+  dyOptions(colors = "blue")
+```
+
+### ジャケット圧
+
+```{r}
+df_jp <- df_raw |> select(Timestamp, jacket_P) |> filter(!is.na(jacket_P))
+jp_xts <- xts(df_jp$jacket_P, order.by = df_jp$Timestamp)
+
+dygraph(jp_xts, main = "Jacket Pressure Trend") |>
+  dyRangeSelector() |>
+  dyOptions(colors = "green")
+```
+
+### ポンプ圧
+
+```{r}
+df_pump <- df_raw |> select(Timestamp, pump_outlet) |> filter(!is.na(pump_outlet))
+pump_xts <- xts(df_pump$pump_outlet, order.by = df_pump$Timestamp)
+
+dygraph(pump_xts, main = "Pump Outlet Pressure Trend") |>
+  dyRangeSelector() |>
+  dyOptions(colors = "red")
 ```
 
 ## データ加工と分析
