@@ -20,6 +20,7 @@ install.packages("gt", repos = "https://cloud.r-project.org")
 install.packages("ggpubr", repos = "https://cloud.r-project.org")
 install.packages("dygraphs", repos = "https://cloud.r-project.org")
 install.packages("xts", repos = "https://cloud.r-project.org")
+install.packages("showtext", repos = "https://cloud.r-project.org")
 ```
 
 ## ロード
@@ -34,6 +35,12 @@ library(ggpubr)
 library(DT)
 library(dygraphs)
 library(xts)
+library(showtext)
+
+# 日本語フォントの設定
+font_add_google("Noto Sans JP", "noto")
+showtext_auto()
+
 knitr::opts_chunk$set(echo=FALSE) # 全てのコードチャンクに適用されるオプション
 ```
 
@@ -78,7 +85,7 @@ analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label, param_name)
     mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
 
   # データテーブル表示
-  print(datatable(df_final))
+  print(datatable(df_final |> rename(詰まり本数 = NoS)))
 
   # プロット作成
   p <- df_final |>
@@ -91,7 +98,7 @@ analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label, param_name)
               size = 3.5,
               check_overlap = FALSE,
               show.legend = FALSE) +
-    labs(x = x_label, y = "NoS") +
+    labs(x = x_label, y = "詰まり本数") +
     theme_bw() +
     theme(
       axis.title = element_text(size = 14),
@@ -162,7 +169,7 @@ datatable(df_raw)
 ### 詰まりデータ
 
 ```{r}
-datatable(df_Stuck)
+datatable(df_Stuck |> rename(詰まり本数 = NoS))
 ```
 
 ## パラメータ推移
