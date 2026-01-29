@@ -1,91 +1,188 @@
 ---
-title: "熱交換器詰まり分析の概要"
-subtitle: "Analysis Workflow Explanation"
-author: "Analysis Team"
+title: "PI活用による熱交詰まり傾向監視"
+subtitle: "Monitoring Heat Exchanger Clogging Trends using PI"
+author: "Ryuta"
 format: revealjs
 editor: visual
 lang: ja
 ---
+
+```{r setup, include=FALSE}
+# パッケージの読み込み
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, readxl, lubridate, gt, ggpubr, DT, dygraphs, xts, showtext)
+
+# 日本語フォント設定
+font_add_google("Noto Sans JP", "noto")
+showtext_auto()
+
+# データ読み込み
+df_raw <- read_xlsx("data/20251210_u_value.xlsx", sheet = 1, guess_max = 3000)
+df_raw <- df_raw |>
+  filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00"))
+
+df_Stuck <- read_xlsx("data/NoS_20251201.xlsx", sheet = 1)
+df_Stuck <- df_Stuck |>
+  filter(Period != "2502") |>
+  mutate(PeriodType = str_c(Period, `b/e`, sep = "_"))
+
+# 関数定義: キャンペーンごとの最大値取得
+get_campaign_max <- function(df, target_col) {
+  extract_stats <- function(sub_df, type_label) {
+    sub_df |>
+      group_by(Period) |>
+      filter(
+        if (type_label == "End") {
+           Timestamp >= (max(Timestamp) %m-% months(1)) & Timestamp <= max(Timestamp)
+        } else {
+           Timestamp >= min(Timestamp) & Timestamp <= (min(Timestamp) %m+% months(1))
+        }
+      ) |>
+      summarize(
+        Max_Value = if_else(all(is.na(.data[[target_col]])), NA_real_, max(.data[[target_col]], na.rm = TRUE)),
+        Reference_Date = if (type_label == "End") max(Timestamp) else min(Timestamp),
+        .groups = 'drop'
+      ) |>
+      mutate(Type = type_label)
+  }
+
+  df_valid <- df |> filter(!is.na(.data[[target_col]]))
+  df_end <- extract_stats(df_valid, "End")
+  df_beg <- extract_stats(df_valid, "Beginning")
+
+  bind_rows(df_end, df_beg) |>
+    mutate(PeriodType = str_c(Period, Type, sep = "_"))
+}
+
+# 関数定義: プロット作成用
+plot_correlation <- function(df_outcome, df_stuck, x_var, x_label) {
+  df_final <- left_join(df_outcome, df_stuck, by = "PeriodType") |>
+    filter(!is.na(NoS)) |>
+    mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
+
+  p <- df_final |>
+    ggplot(aes(x = .data[[x_var]], y = NoS, color = Time_Category)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE) +
+    stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") +
+    geom_text(aes(label = PeriodType), vjust = -1, size = 3, check_overlap = FALSE, show.legend = FALSE) +
+    labs(x = x_label, y = "詰まり本数") +
+    theme_bw() +
+    theme(text = element_text(family = "noto"))
+  return(p)
+}
+
+# 関数定義: 乖離幅計算用
+calc_deviation <- function(df_outcome, df_stuck, x_var, param_name) {
+  df_final <- left_join(df_outcome, df_stuck, by = "PeriodType") |>
+    filter(!is.na(NoS)) |>
+    mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
+
+  stats_list <- list()
+  for (cat in unique(df_final$Time_Category)) {
+    df_sub <- df_final |> filter(Time_Category == cat)
+    if (nrow(df_sub) >= 3) {
+      f <- as.formula(paste("NoS ~", x_var))
+      model <- lm(f, data = df_sub)
+      max_dev_val <- max(abs(residuals(model)))
+      pct_val <- (max_dev_val / 922) * 100
+      stats_list[[cat]] <- tibble(
+        Parameter = param_name,
+        Period = cat,
+        Max_Deviation = round(max_dev_val, 2),
+        Percentage_of_Total = round(pct_val, 2)
+      )
+    }
+  }
+  return(bind_rows(stats_list))
+}
+```
 
 ## 分析の目的
 
 **熱交換器の詰まり要因の特定**
 
 -   **ターゲット:** 詰まり本数 (NoS: Number of Stuck Tubes)
--   **説明変数:** 運転パラメータ
-    -   U値 (U-Value) -\> UA (総括伝熱係数 × 伝熱面積)
+-   **説明変数:**
+    -   U値 (U-Value) $\to$ UA
     -   ジャケット圧 (Jacket Pressure)
     -   ポンプ吐出圧 (Pump Outlet Pressure)
 
-これらパラメータと詰まり本数の相関関係を分析します。
-
 ## 使用データ
 
-入力データは以下のExcelファイルを使用しています (`data/` ディレクトリ)。
+**PI System より取得**
 
-1.  **時系列プロセスデータ** (`20251210_u_value.xlsx`)
-    -   U値, ジャケット圧, ポンプ圧などのタイムスタンプ付きデータ
-    -   2021年2月以降のデータを対象
-2.  **詰まり本数データ** (`NoS_20251201.xlsx`)
-    -   キャンペーンごとの詰まり本数 (NoS)
-    -   初期 (Beginning) / 末期 (End) の区分
+-   **時系列データ:** `20251210_u_value.xlsx`
+    -   対象期間: 2021年2月以降
+-   **詰まり実績:** `NoS_20251201.xlsx`
 
-## 分析フロー概要
+## パラメータ推移 (U値)
 
-1.  **データ読み込み & 前処理**
-2.  **時系列トレンド可視化** (Dygraphs)
-3.  **特徴量抽出** (キャンペーンごとの最大値)
-4.  **相関分析 & 回帰モデル作成**
-    -   時期別比較 (2021年9月 前/後)
-5.  **乖離幅 (Deviation) の評価**
+```{r}
+df_u <- df_raw |> select(Timestamp, U) |> filter(!is.na(U))
+u_xts <- xts(df_u$U, order.by = df_u$Timestamp)
+dygraph(u_xts, main = "U Value Trend") |> dyRangeSelector() |> dyOptions(colors = "blue")
+```
 
-## 前処理ロジック
+## パラメータ推移 (ジャケット圧)
 
-### 1. 特徴量の抽出 (`get_campaign_max`)
+```{r}
+df_jp <- df_raw |> select(Timestamp, jacket_P) |> filter(!is.na(jacket_P))
+jp_xts <- xts(df_jp$jacket_P, order.by = df_jp$Timestamp)
+dygraph(jp_xts, main = "Jacket Pressure Trend") |> dyRangeSelector() |> dyOptions(colors = "green")
+```
 
-キャンペーンの「初期」および「末期」における各パラメータの最大値を抽出します。 - **End:** キャンペーン終了前の1ヶ月間 - **Beginning:** キャンペーン開始後の1ヶ月間
+## パラメータ推移 (ポンプ圧)
 
-### 2. 時期による区分 (`Time_Category`)
+```{r}
+df_pump <- df_raw |> select(Timestamp, pump_outlet) |> filter(!is.na(pump_outlet))
+pump_xts <- xts(df_pump$pump_outlet, order.by = df_pump$Timestamp)
+dygraph(pump_xts, main = "Pump Outlet Pressure Trend") |> dyRangeSelector() |> dyOptions(colors = "red")
+```
 
-データの傾向変化を考慮し、**2021年9月 (2021-10-01)** を境界としてデータを2つに分割して分析します。 - `Before Sep 2021` - `After Sep 2021`
+## 相関分析: Case 1 (UA)
 
-## 可視化: トレンド監視
+-   U値の最大値 $\times$ 367 $\to$ UA
 
-インタラクティブな時系列グラフ (`dygraphs`) を用いて、各パラメータの挙動を確認します。
+```{r}
+df_outcome_u <- get_campaign_max(df_raw, "U") |> mutate(UA = Max_Value * 367)
+plot_correlation(df_outcome_u, df_Stuck, "UA", "UA")
+```
 
--   **U値:** 青色 (Blue)
--   **ジャケット圧:** 緑色 (Green)
--   **ポンプ圧:** 赤色 (Red)
+## 相関分析: Case 2 (ジャケット圧)
 
-欠損値を除去した上で `xts` オブジェクトに変換して描画しています。
+-   ジャケット圧の最大値
 
-## 分析ケース詳細
+```{r}
+df_outcome_jacket <- get_campaign_max(df_raw, "jacket_P")
+plot_correlation(df_outcome_jacket, df_Stuck, "Max_Value", "Jacket Pressure")
+```
 
-以下の3つのケースについて相関を評価します。
+## 相関分析: Case 3 (ポンプ圧)
 
--   **Case 1: UA**
-    -   U値の最大値に対し、係数 **367** を乗じてUAを算出
--   **Case 2: ジャケット圧**
-    -   `jacket_P` の最大値を使用
--   **Case 3: ポンプ圧**
-    -   `pump_outlet` の最大値を使用
+-   ポンプ吐出圧の最大値
 
-## 評価指標: 乖離幅 (Deviation)
+```{r}
+df_outcome_pump <- get_campaign_max(df_raw, "pump_outlet")
+plot_correlation(df_outcome_pump, df_Stuck, "Max_Value", "Pump Pressure")
+```
 
-回帰直線からの**残差 (Residuals)** を計算し、予測モデルからの乖離を評価します。
+## 評価結果 (乖離幅)
 
--   **最大乖離幅 (Max Deviation):**
-    -   各時期区分における残差の絶対値の最大値
--   **全体に対する割合:**
-    -   全チューブ本数 **922本** に対する割合 (%)
-    -   $\frac{\text{Max Deviation}}{922} \times 100$
+回帰直線からの最大乖離幅 (Max Deviation) と、全チューブ本数 (922本) に対する割合。
 
-## 出力レポート
+```{r}
+# 各ケースの乖離幅を計算して統合
+res_ua <- calc_deviation(df_outcome_u, df_Stuck, "UA", "UA")
+res_jp <- calc_deviation(df_outcome_jacket, df_Stuck, "Max_Value", "Jacket Pressure")
+res_pp <- calc_deviation(df_outcome_pump, df_Stuck, "Max_Value", "Pump Pressure")
 
-分析結果は `Analysis_1st.html` として出力されます。
+bind_rows(res_ua, res_jp, res_pp) |>
+  datatable(options = list(pageLength = 6, dom = 't'))
+```
 
--   散布図 (Scatter Plot) + 回帰直線
--   相関係数 (Pearson)
--   時期ごとの乖離幅統計テーブル
+## 結論
 
-このレポートにより、運転パラメータと詰まりリスクの関係性を定量的に把握します。
+-   各パラメータと詰まり本数には一定の相関が見られる。
+-   **2021年9月** を境に傾向が変化している可能性があるため、時期を分けた監視が推奨される。
+-   PI Systemのデータを活用することで、継続的なモニタリングが可能。
