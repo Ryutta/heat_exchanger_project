@@ -1,0 +1,92 @@
+---
+title: "2025年進捗報告"
+subtitle: "Monitoring Heat Exchanger Clogging Trends using PI"
+author: "Ryuta"
+format: revealjs
+editor: visual
+lang: ja
+---
+
+```{r setup, include=FALSE}
+# パッケージの読み込み
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, readxl, lubridate, gt, ggpubr, DT, dygraphs, xts, showtext)
+
+# 日本語フォント設定
+font_add_google("Noto Sans JP", "noto")
+showtext_auto()
+
+# データ読み込み
+df_raw <- read_xlsx("data/20251210_u_value.xlsx", sheet = 1, guess_max = 3000)
+df_raw <- df_raw |>
+  filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00"))
+
+df_Stuck <- read_xlsx("data/NoS_20251201.xlsx", sheet = 1)
+df_Stuck <- df_Stuck |>
+  filter(Period != "2502") |>
+  mutate(PeriodType = str_c(Period, `b/e`, sep = "_"))
+
+# 関数定義: キャンペーンごとの最大値取得
+get_campaign_max <- function(df, target_col) {
+  extract_stats <- function(sub_df, type_label) {
+    sub_df |>
+      group_by(Period) |>
+      filter(
+        if (type_label == "End") {
+           Timestamp >= (max(Timestamp) %m-% months(1)) & Timestamp <= max(Timestamp)
+        } else {
+           Timestamp >= min(Timestamp) & Timestamp <= (min(Timestamp) %m+% months(1))
+        }
+      ) |>
+      summarize(
+        Max_Value = if_else(all(is.na(.data[[target_col]])), NA_real_, max(.data[[target_col]], na.rm = TRUE)),
+        Reference_Date = if (type_label == "End") max(Timestamp) else min(Timestamp),
+        .groups = 'drop'
+      ) |>
+      mutate(Type = type_label)
+  }
+
+  df_valid <- df |> filter(!is.na(.data[[target_col]]))
+  df_end <- extract_stats(df_valid, "End")
+  df_beg <- extract_stats(df_valid, "Beginning")
+
+  bind_rows(df_end, df_beg) |>
+    mutate(PeriodType = str_c(Period, Type, sep = "_"))
+}
+
+# 関数定義: プロット作成用
+plot_correlation <- function(df_outcome, df_stuck, x_var, x_label) {
+  df_final <- left_join(df_outcome, df_stuck, by = "PeriodType") |>
+    filter(!is.na(NoS)) |>
+    mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
+
+  p <- df_final |>
+    ggplot(aes(x = .data[[x_var]], y = NoS, color = Time_Category)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE) +
+    stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") +
+    geom_text(aes(label = PeriodType), vjust = -1, size = 3, check_overlap = FALSE, show.legend = FALSE) +
+    labs(x = x_label, y = "詰まり本数") +
+    theme_bw() +
+    theme(text = element_text(family = "noto"))
+  return(p)
+}
+```
+
+## 2025年 実績まとめ
+
+**活動内容:**
+データを整理し、詰まり本数と各種パラメータの相関を検討した。
+
+-   **データの整理:**
+    -   PI Systemデータ (時系列) と 詰まり本数データ (NoS) の突き合わせを実施。
+-   **相関の検討:**
+    -   U値 (UA)、ジャケット圧、ポンプ吐出圧との相関を分析。
+    -   下図: UAと詰まり本数の相関 (Case 1)
+
+```{r}
+#| echo: false
+#| fig-height: 4.5
+df_outcome_u <- get_campaign_max(df_raw, "U") |> mutate(UA = Max_Value * 367)
+plot_correlation(df_outcome_u, df_Stuck, "UA", "UA")
+```
