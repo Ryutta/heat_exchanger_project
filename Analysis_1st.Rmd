@@ -187,7 +187,7 @@ if (nrow(all_data) > 0) {
   # Check if all columns exist (might be missing if fetch failed for some)
   cols_needed <- tags
   if (all(cols_needed %in% names(df_wide))) {
-
+    
     df_calc <- df_wide |>
       rename(
         steam_flow = `M2FC4403.PV`,
@@ -199,48 +199,60 @@ if (nrow(all_data) > 0) {
       mutate(
         # Constants
         steam_latent_heat = 2257.05,
-
+        
         # Step 1: Heat q
         q = steam_flow * steam_latent_heat * 1000 / 3600 / 1000,
-
+        
         # Step 2: Pump Flow
         # pump_inlet (kPa)
         pump_inlet = (pump_inlet_raw / 760 * 101.325) + (950 * 9.81 * (1.4 + 6.125) / 1000),
-
+        
         # pump_outlet (kPa abs) = gauge + 101.325
         pump_outlet_abs = pump_outlet_raw + 101.325,
-
+        
         # lifting_height (m)
         lifting_height = (pump_outlet_abs - pump_inlet) * 1000 / 9.81 / 950,
-
+        
         # pump_flow
         x = lifting_height,
         pump_flow = (-0.6857 * x^2 + 0.8571 * x + 43.589) * 60 * 950 / 1000,
-
+        
         # Step 3: Temps
         # t2 calculation
         t2 = t1 + q * 1000 / (pump_flow * 1000 / 3600) / 2.09,
-
+        
         # t3_t4 calculation
         t3_t4 = 27.838 * log(jacket_P + 101.325) - 28.559,
-
+        
         dT1 = t3_t4 - t1,
         dT2 = t3_t4 - t2,
-
+        
         # LMTD
         delta_tlm = (dT1 - dT2) / log(dT1 / dT2),
-
+        
         # Step 4: U
         U = (q * 1000 * 1000 / 367) / delta_tlm
       )
-
+      
     df_raw <- df_calc |>
       select(Timestamp, U, jacket_P, pump_outlet = pump_outlet_raw) |>
-      filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00"))
-
+      filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00")) |>
+      mutate(
+        Period = case_when(
+          Timestamp >= as.POSIXct("2021-03-13") & Timestamp <= as.POSIXct("2021-09-08") ~ "2103",
+          Timestamp >= as.POSIXct("2021-10-04") & Timestamp <= as.POSIXct("2022-04-13") ~ "2109",
+          Timestamp >= as.POSIXct("2022-07-03") & Timestamp <= as.POSIXct("2023-01-26") ~ "2206",
+          Timestamp >= as.POSIXct("2023-02-16") & Timestamp <= as.POSIXct("2023-09-19") ~ "2302",
+          Timestamp >= as.POSIXct("2023-10-21") & Timestamp <= as.POSIXct("2024-04-12") ~ "2310",
+          Timestamp >= as.POSIXct("2025-07-01") ~ "2502",
+          TRUE ~ NA_character_
+        )
+      ) |>
+      filter(!is.na(Period)) # Remove data outside defined periods
+      
   } else {
     warning("Missing some required PI tags in fetched data.")
-    df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric())
+    df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric(), Period = character())
   }
 } else {
   warning("No PI Data fetched. Using empty structure.")

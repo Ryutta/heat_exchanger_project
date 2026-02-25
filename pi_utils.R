@@ -34,7 +34,7 @@ get_web_id <- function(tag_name) {
     warning("No authentication config loaded.")
     return(NULL)
   }
-
+  
   # Construct the path: \\ServerName\TagName
   path <- sprintf("\\\\%s\\%s", PI_SERVER_NAME, tag_name)
 
@@ -90,7 +90,7 @@ get_recorded_data <- function(web_id, tag_name, start_time = "*-3d", end_time = 
 
   # Handle complex value
   vals <- items$Value
-
+  
   if (is.data.frame(vals)) {
     if ("Value" %in% names(vals)) {
       vals <- vals$Value
@@ -115,7 +115,7 @@ get_recorded_data <- function(web_id, tag_name, start_time = "*-3d", end_time = 
     Tag = tag_name,
     stringsAsFactors = FALSE
   )
-
+  
   # Clean timestamp and value
   df$Timestamp <- ymd_hms(df$Timestamp)
   df$Value <- as.numeric(df$Value)
