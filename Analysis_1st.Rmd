@@ -236,11 +236,23 @@ if (nrow(all_data) > 0) {
 
     df_raw <- df_calc |>
       select(Timestamp, U, jacket_P, pump_outlet = pump_outlet_raw) |>
-      filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00"))
+      filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00")) |>
+      mutate(
+        Period = case_when(
+          Timestamp >= as.POSIXct("2021-03-13") & Timestamp <= as.POSIXct("2021-09-08") ~ "2103",
+          Timestamp >= as.POSIXct("2021-10-04") & Timestamp <= as.POSIXct("2022-04-13") ~ "2109",
+          Timestamp >= as.POSIXct("2022-07-03") & Timestamp <= as.POSIXct("2023-01-26") ~ "2206",
+          Timestamp >= as.POSIXct("2023-02-16") & Timestamp <= as.POSIXct("2023-09-19") ~ "2302",
+          Timestamp >= as.POSIXct("2023-10-21") & Timestamp <= as.POSIXct("2024-04-12") ~ "2310",
+          Timestamp >= as.POSIXct("2025-07-01") ~ "2502",
+          TRUE ~ NA_character_
+        )
+      ) |>
+      filter(!is.na(Period)) # Remove data outside defined periods
 
   } else {
     warning("Missing some required PI tags in fetched data.")
-    df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric())
+    df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric(), Period = character())
   }
 } else {
   warning("No PI Data fetched. Using empty structure.")
