@@ -160,8 +160,8 @@ start_time <- "2021-02-01T00:00:00"
 for (tag in tags) {
   web_id <- get_web_id(tag)
   if (!is.null(web_id)) {
-    # Fetching recorded data (compressed)
-    d <- get_recorded_data(web_id, tag, start_time = start_time, end_time = "*")
+    # Fetching interpolated data (daily)
+    d <- get_interpolated_data(web_id, tag, start_time = start_time, end_time = "*", interval = "24h")
     if (!is.null(d)) {
       all_data <- bind_rows(all_data, d)
     }
@@ -169,9 +169,9 @@ for (tag in tags) {
 }
 
 if (nrow(all_data) > 0) {
-  # Align Data: Round to nearest hour and aggregate to mean
+  # Align Data: Daily data
   df_wide <- all_data |>
-    mutate(Timestamp = floor_date(Timestamp, "hour")) |>
+    mutate(Timestamp = floor_date(Timestamp, "day")) |>
     group_by(Timestamp, Tag) |>
     summarize(Value = mean(Value, na.rm = TRUE), .groups = "drop") |>
     pivot_wider(names_from = Tag, values_from = Value)

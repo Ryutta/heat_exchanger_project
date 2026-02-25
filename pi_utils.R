@@ -25,11 +25,21 @@ if (file.exists("auth_config.R")) {
 ssl_config <- config(ssl_verifypeer = 0)
 
 # Mock Data Generation (if API fails or no auth)
-generate_mock_data <- function(tag_name, start_time, end_time) {
+generate_mock_data <- function(tag_name, start_time, end_time, interval = "1h") {
   # Mock data range covering some periods defined in Analysis_1st.Rmd
   start_dt <- as.POSIXct("2021-02-01 00:00:00")
   end_dt <- as.POSIXct("2024-04-12 00:00:00")
-  timestamps <- seq(start_dt, end_dt, by = "hour")
+
+  # Simple interval parsing for mock (converts "24h" -> "24 hours", "1h" -> "1 hour")
+  if (grepl("h", interval)) {
+    by_interval <- paste(gsub("h", "", interval), "hours")
+  } else if (grepl("d", interval)) {
+    by_interval <- paste(gsub("d", "", interval), "days")
+  } else {
+    by_interval <- "hour" # fallback
+  }
+
+  timestamps <- seq(start_dt, end_dt, by = by_interval)
   
   # Basic mock values based on tag type
   if (grepl("Flow", tag_name) || grepl("FC", tag_name)) {
@@ -147,6 +157,76 @@ get_recorded_data <- function(web_id, tag_name, start_time = "*-3d", end_time = 
     stringsAsFactors = FALSE
   )
   
+  # Clean timestamp and value
+  df$Timestamp <- ymd_hms(df$Timestamp)
+  df$Value <- as.numeric(df$Value)
+  df <- df %>% filter(!is.na(Value))
+
+  return(df)
+}
+
+#' Get Interpolated Data for a WebID
+#' @param web_id The WebId of the stream
+#' @param tag_name The name of the tag (for mock generation)
+#' @param start_time Start time string (e.g., "*-3d")
+#' @param end_time End time string (e.g., "*")
+#' @param interval Interval string (e.g., "1h", "24h")
+#' @return A data frame of the interpolated values
+get_interpolated_data <- function(web_id, tag_name, start_time = "*-3d", end_time = "*", interval = "1h") {
+  if (is.null(auth_config) || grepl("mock_webid", web_id)) {
+    warning("No authentication config loaded or mock WebID used. Returning mock data.")
+    return(generate_mock_data(tag_name, start_time, end_time, interval))
+  }
+
+  url <- paste0(PI_WEB_API_BASE_URL, "/streams/", web_id, "/interpolated")
+
+  response <- GET(
+    url,
+    query = list(startTime = start_time, endTime = end_time, interval = interval),
+    auth_config,
+    ssl_config
+  )
+
+  if (status_code(response) != 200) {
+    warning(paste("Failed to get data for", tag_name, ":", content(response, "text")))
+    return(NULL)
+  }
+
+  content_json <- fromJSON(content(response, "text", encoding = "UTF-8"))
+  items <- content_json$Items
+
+  if (is.null(items) || length(items) == 0) {
+    return(NULL)
+  }
+
+  # Handle complex value
+  vals <- items$Value
+
+  if (is.data.frame(vals)) {
+    if ("Value" %in% names(vals)) {
+      vals <- vals$Value
+    } else {
+      vals <- vals[[1]]
+    }
+  } else if (is.list(vals)) {
+    vals <- sapply(vals, function(x) {
+      if (is.list(x) || is.data.frame(x)) {
+         if ("Value" %in% names(x)) return(x$Value)
+         if (length(x) > 0) return(x[[1]])
+         return(NA)
+      } else {
+         return(x)
+      }
+    })
+  }
+
+  df <- data.frame(
+    Timestamp = items$Timestamp,
+    Value = vals,
+    Tag = tag_name,
+    stringsAsFactors = FALSE
+  )
+
   # Clean timestamp and value
   df$Timestamp <- ymd_hms(df$Timestamp)
   df$Value <- as.numeric(df$Value)
