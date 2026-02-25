@@ -148,9 +148,104 @@ analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label, param_name)
 ## 使用データ
 
 ```{r}
-df_raw <- read_xlsx("data/20251210_u_value.xlsx", sheet = 1, guess_max = 3000)
-df_raw <- df_raw |>
-  filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00"))
+source("pi_utils.R")
+
+# Tags needed for calculation
+tags <- c("M2FC4403.PV", "M2TI4405.PV", "M2PI4410W.PV", "M2PI4407.PV", "M2PI4411W.PV")
+
+all_data <- data.frame()
+start_time <- "2021-02-01T00:00:00"
+
+# Fetch Data
+for (tag in tags) {
+  web_id <- get_web_id(tag)
+  if (!is.null(web_id)) {
+    # Fetching recorded data (compressed)
+    d <- get_recorded_data(web_id, tag, start_time = start_time, end_time = "*")
+    if (!is.null(d)) {
+      all_data <- bind_rows(all_data, d)
+    }
+  }
+}
+
+if (nrow(all_data) > 0) {
+  # Align Data: Round to nearest hour and aggregate to mean
+  df_wide <- all_data |>
+    mutate(Timestamp = floor_date(Timestamp, "hour")) |>
+    group_by(Timestamp, Tag) |>
+    summarize(Value = mean(Value, na.rm = TRUE), .groups = "drop") |>
+    pivot_wider(names_from = Tag, values_from = Value)
+
+  # Calculate U based on U_Calculation_Method.md
+  # Mapping:
+  # M2FC4403.PV -> steam_flow
+  # M2TI4405.PV -> t1 (inlet temp)
+  # M2PI4410W.PV -> jacket_P
+  # M2PI4407.PV -> pump_inlet_raw
+  # M2PI4411W.PV -> pump_outlet_raw
+
+  # Check if all columns exist (might be missing if fetch failed for some)
+  cols_needed <- tags
+  if (all(cols_needed %in% names(df_wide))) {
+
+    df_calc <- df_wide |>
+      rename(
+        steam_flow = `M2FC4403.PV`,
+        t1 = `M2TI4405.PV`,
+        jacket_P = `M2PI4410W.PV`,
+        pump_inlet_raw = `M2PI4407.PV`,
+        pump_outlet_raw = `M2PI4411W.PV`
+      ) |>
+      mutate(
+        # Constants
+        steam_latent_heat = 2257.05,
+
+        # Step 1: Heat q
+        q = steam_flow * steam_latent_heat * 1000 / 3600 / 1000,
+
+        # Step 2: Pump Flow
+        # pump_inlet (kPa)
+        pump_inlet = (pump_inlet_raw / 760 * 101.325) + (950 * 9.81 * (1.4 + 6.125) / 1000),
+
+        # pump_outlet (kPa abs) = gauge + 101.325
+        pump_outlet_abs = pump_outlet_raw + 101.325,
+
+        # lifting_height (m)
+        lifting_height = (pump_outlet_abs - pump_inlet) * 1000 / 9.81 / 950,
+
+        # pump_flow
+        x = lifting_height,
+        pump_flow = (-0.6857 * x^2 + 0.8571 * x + 43.589) * 60 * 950 / 1000,
+
+        # Step 3: Temps
+        # t2 calculation
+        t2 = t1 + q * 1000 / (pump_flow * 1000 / 3600) / 2.09,
+
+        # t3_t4 calculation
+        t3_t4 = 27.838 * log(jacket_P + 101.325) - 28.559,
+
+        dT1 = t3_t4 - t1,
+        dT2 = t3_t4 - t2,
+
+        # LMTD
+        delta_tlm = (dT1 - dT2) / log(dT1 / dT2),
+
+        # Step 4: U
+        U = (q * 1000 * 1000 / 367) / delta_tlm
+      )
+
+    df_raw <- df_calc |>
+      select(Timestamp, U, jacket_P, pump_outlet = pump_outlet_raw) |>
+      filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00"))
+
+  } else {
+    warning("Missing some required PI tags in fetched data.")
+    df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric())
+  }
+} else {
+  warning("No PI Data fetched. Using empty structure.")
+  df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric())
+}
 
 df_Stuck <- read_xlsx("data/NoS_20251201.xlsx", sheet = 1)
 df_Stuck <- df_Stuck |>
