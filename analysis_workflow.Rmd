@@ -1,0 +1,170 @@
+---
+title: "PI データ分析ワークフロー"
+author: "データ分析チーム"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## はじめに
+
+このレポートでは、PI Web APIを使用してPIシステムからデータを取得し、Rを用いて可視化する一連の流れを示します。
+今回は、以下のタグのデータを取得対象とします：
+**M2TI4405.PV**, **M2PI4407.PV**, **M2PI4410W.PV**, **M2PI4411W.PV**, **M2FC4403.PV**, **M2CI2901.CPV**
+
+## ステップ 1: ライブラリの読み込み
+
+APIリクエストには `httr`、JSONの解析には `jsonlite`、データの整形・可視化には `dplyr`, `lubridate`, `ggplot2` を使用します。
+
+```{r libraries}
+library(httr)
+library(jsonlite)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+```
+
+## ステップ 2: 設定
+
+PI Web APIへの接続パラメータを設定します。
+※ URL等の設定値はリポジトリ内の設定ファイル (`expressions.tmdl`) を参照しています。
+
+```{r config}
+# PIシステムの設定
+PI_WEB_API_BASE_URL <- "https://hinuta105.ccit.ad.sharedom.net/piwebapi"
+PI_SERVER_NAME <- "HINUTA101C"
+TAG_NAMES <- c("M2TI4405.PV", "M2PI4407.PV", "M2PI4410W.PV", "M2PI4411W.PV", "M2FC4403.PV", "M2CI2901.CPV")
+
+# 認証設定
+# 'auth_config.R' から認証情報を読み込みます
+if (file.exists("auth_config.R")) {
+  source("auth_config.R")
+  auth_config <- authenticate(AUTH_USER, AUTH_PASS)
+} else {
+  stop("認証設定ファイル 'auth_config.R' が見つかりません。'auth_config_template.R' をコピーして設定してください。")
+}
+ssl_config <- config(ssl_verifypeer = 0) # 社内サーバー等のためSSL検証をスキップ
+```
+
+## ステップ 3: 関数定義
+
+APIと対話するためのヘルパー関数を定義します。
+1. `get_web_id`: タグ名からWebIDを取得する関数
+2. `get_recorded_data`: WebIDを使用して指定期間の記録データ（Recorded Data）を取得する関数
+
+```{r functions}
+get_web_id <- function(tag_name) {
+  path <- sprintf("\\\\%s\\%s", PI_SERVER_NAME, tag_name)
+  url <- paste0(PI_WEB_API_BASE_URL, "/points")
+
+  response <- GET(url, query = list(path = path), auth_config, ssl_config)
+
+  if (status_code(response) != 200) {
+    warning(paste("WebIDの取得に失敗しました:", tag_name))
+    return(NULL)
+  }
+
+  content_json <- fromJSON(content(response, "text", encoding = "UTF-8"))
+  return(content_json$WebId)
+}
+
+get_recorded_data <- function(web_id, tag_name, start_time = "*-3d", end_time = "*") {
+  url <- paste0(PI_WEB_API_BASE_URL, "/streams/", web_id, "/recorded")
+
+  response <- GET(url, query = list(startTime = start_time, endTime = end_time),
+                  auth_config, ssl_config)
+
+  if (status_code(response) != 200) {
+    warning(paste("データの取得に失敗しました:", tag_name))
+    return(NULL)
+  }
+
+  content_json <- fromJSON(content(response, "text", encoding = "UTF-8"))
+  items <- content_json$Items
+
+  if (is.null(items) || length(items) == 0) return(NULL)
+
+  # Handle complex value (e.g. Digital State object or System Error)
+  vals <- items$Value
+  
+  if (is.data.frame(vals)) {
+    # If it's a data frame, we want the "Value" column if it exists, otherwise the first column.
+    # We must NOT unlist the entire data frame as that concatenates columns.
+    if ("Value" %in% names(vals)) {
+      vals <- vals$Value
+    } else {
+      vals <- vals[[1]]
+    }
+  } else if (is.list(vals)) {
+    # If it's a list of objects (e.g. from JSON), extract the Value field or the first element
+    # Use sapply to ensure we get a vector of the same length, handling NULLs
+    vals <- sapply(vals, function(x) {
+      if (is.list(x) || is.data.frame(x)) {
+         if ("Value" %in% names(x)) return(x$Value)
+         if (length(x) > 0) return(x[[1]])
+         return(NA)
+      } else {
+         return(x)
+      }
+    })
+  }
+
+  data.frame(
+    Timestamp = items$Timestamp,
+    Value = vals,
+    Tag = tag_name,
+    stringsAsFactors = FALSE
+  )
+}
+```
+
+## ステップ 4: データ取得の実行
+
+定義したタグのリストをループ処理し、WebIDを取得した後、過去3日間（`*-3d`）のデータを取得します。
+
+```{r fetch_data}
+all_data <- data.frame()
+
+for (tag in TAG_NAMES) {
+  web_id <- get_web_id(tag)
+
+  if (!is.null(web_id)) {
+    tag_data <- get_recorded_data(web_id, tag)
+    if (!is.null(tag_data)) {
+      all_data <- rbind(all_data, tag_data)
+    }
+  }
+}
+
+# データの先頭を表示
+head(all_data)
+```
+
+## ステップ 5: データ整形と可視化
+
+取得したデータのタイムスタンプを日付型に変換し、値を数値型に変換した後、グラフを描画します。
+
+```{r plot}
+if (nrow(all_data) > 0) {
+  # 型変換
+  all_data$Timestamp <- ymd_hms(all_data$Timestamp)
+  all_data$Value <- as.numeric(all_data$Value)
+
+  # 数値変換でNAになったデータ（システムステート等）を除去
+  all_data <- all_data %>% filter(!is.na(Value))
+
+  # プロット
+  ggplot(all_data, aes(x = Timestamp, y = Value, color = Tag)) +
+    geom_line() +
+    labs(title = "PIデータトレンド",
+         subtitle = paste(TAG_NAMES, collapse = ", "),
+         x = "日時",
+         y = "値") +
+    theme_minimal()
+} else {
+  print("表示可能なデータがありません。")
+}
+```
