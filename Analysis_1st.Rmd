@@ -154,7 +154,7 @@ source("pi_utils.R")
 tags <- c("M2FC4403.PV", "M2TI4405.PV", "M2PI4410W.PV", "M2PI4407.PV", "M2PI4411W.PV")
 
 all_data <- data.frame()
-start_time <- "2021-02-01T00:00:00"
+start_time <- "2021-02-01T00:00:00Z"
 
 # Fetch Data
 for (tag in tags) {
@@ -171,6 +171,7 @@ for (tag in tags) {
 if (nrow(all_data) > 0) {
   # Align Data: Daily data
   df_wide <- all_data |>
+    mutate(Timestamp = with_tz(Timestamp, tzone = "UTC")) |>
     mutate(Timestamp = floor_date(Timestamp, "day")) |>
     group_by(Timestamp, Tag) |>
     summarize(Value = mean(Value, na.rm = TRUE), .groups = "drop") |>
@@ -244,6 +245,7 @@ if (nrow(all_data) > 0) {
           Timestamp >= as.POSIXct("2022-07-03") & Timestamp <= as.POSIXct("2023-01-26") ~ "2206",
           Timestamp >= as.POSIXct("2023-02-16") & Timestamp <= as.POSIXct("2023-09-19") ~ "2302",
           Timestamp >= as.POSIXct("2023-10-21") & Timestamp <= as.POSIXct("2024-04-12") ~ "2310",
+          Timestamp >= as.POSIXct("2024-04-13") & Timestamp <= as.POSIXct("2025-06-30") ~ "2404",
           Timestamp >= as.POSIXct("2025-07-01") ~ "2502",
           TRUE ~ NA_character_
         )
