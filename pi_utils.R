@@ -28,7 +28,7 @@ ssl_config <- config(ssl_verifypeer = 0)
 generate_mock_data <- function(tag_name, start_time, end_time, interval = "1h") {
   # Mock data range covering some periods defined in Analysis_1st.Rmd
   start_dt <- as.POSIXct("2021-02-01 00:00:00")
-  end_dt <- as.POSIXct("2024-04-12 00:00:00")
+  end_dt <- as.POSIXct("2026-01-01 00:00:00")
 
   # Simple interval parsing for mock (converts "24h" -> "24 hours", "1h" -> "1 hour")
   if (grepl("h", interval)) {
