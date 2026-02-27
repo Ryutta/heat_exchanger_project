@@ -171,6 +171,7 @@ for (tag in tags) {
 if (nrow(all_data) > 0) {
   # Align Data: Daily data
   df_wide <- all_data |>
+    mutate(Timestamp = with_tz(Timestamp, tzone = "UTC")) |>
     mutate(Timestamp = floor_date(Timestamp, "day")) |>
     group_by(Timestamp, Tag) |>
     summarize(Value = mean(Value, na.rm = TRUE), .groups = "drop") |>
