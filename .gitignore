@@ -1,5 +1,22 @@
+﻿# R environment
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+.positai
+
+# Secrets & Config
 auth_config.R
+
+# Knitr & Rmarkdown cache / generated asset dirs
+*_cache/
+*_files/
+Analysis_1st_files/
+Analysis_1st_cache/
+Analysis_M1E_4410_files/
+Analysis_M1E_4410_cache/
+analysis_presentation_files/
+
+# Temporary / intermediate markdown outputs
+*.knit.md
+*.utf8.md

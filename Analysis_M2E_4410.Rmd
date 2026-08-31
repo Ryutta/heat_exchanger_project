@@ -1,0 +1,396 @@
+---
+title: "M2E-4410 性能評価およびチューブ閉塞分析レポート"
+author: "Ryuta"
+date: "2026-01-05"
+output: html_document
+---
+
+# 目的
+
+M2粗MAA分離塔リボイラー（M2E-4410）の詰まり本数と各運転パラメータ（U値、ジャケット圧、ポンプ圧）の相関関係を分析し、詰まりの発生要因を特定することを目的とする。
+
+```{r install_packages, message=FALSE, warning=FALSE, include=FALSE, cache=TRUE}
+## 環境構築
+install.packages("pacman", repos = "https://cloud.r-project.org")
+install.packages("GGally", repos = "https://cloud.r-project.org")
+install.packages("ggplot2", repos = "https://cloud.r-project.org")
+install.packages("e1071", repos = "https://cloud.r-project.org")
+install.packages("readxl", repos = "https://cloud.r-project.org")
+install.packages("gt", repos = "https://cloud.r-project.org")
+install.packages("ggpubr", repos = "https://cloud.r-project.org")
+install.packages("dygraphs", repos = "https://cloud.r-project.org")
+install.packages("xts", repos = "https://cloud.r-project.org")
+install.packages("showtext", repos = "https://cloud.r-project.org")
+```
+
+## ロード
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(lubridate) # 日付計算（%m-% や months()）のために必要
+library(gt)
+library(ggpubr)
+library(DT)
+library(dygraphs)
+library(xts)
+library(showtext)
+
+# 日本語フォントの設定
+font_add_google("Noto Sans JP", "noto")
+showtext_auto()
+
+knitr::opts_chunk$set(echo=FALSE) # 全てのコードチャンクに適用されるオプション
+```
+
+## 関数定義
+
+```{r}
+# キャンペーンごとの最大値（初期・末期）を取得する関数
+get_campaign_max <- function(df, target_col) {
+
+  extract_stats <- function(sub_df, type_label) {
+    sub_df |>
+      group_by(Period) |>
+      filter(
+        if (type_label == "End") {
+           Timestamp >= (max(Timestamp) %m-% months(1)) & Timestamp <= max(Timestamp)
+        } else {
+           Timestamp >= min(Timestamp) & Timestamp <= (min(Timestamp) %m+% months(1))
+        }
+      ) |>
+      summarize(
+        Max_Value = if_else(all(is.na(.data[[target_col]])), NA_real_, max(.data[[target_col]], na.rm = TRUE)),
+        Reference_Date = if (type_label == "End") max(Timestamp) else min(Timestamp),
+        .groups = 'drop'
+      ) |>
+      mutate(Type = type_label)
+  }
+
+  df_valid <- df |> filter(!is.na(.data[[target_col]]))
+
+  df_end <- extract_stats(df_valid, "End")
+  df_beg <- extract_stats(df_valid, "Beginning")
+
+  bind_rows(df_end, df_beg) |>
+    mutate(PeriodType = str_c(Period, Type, sep = "_"))
+}
+
+# 分析・可視化を行う関数
+analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label, param_name) {
+  # 結合
+  df_final <- left_join(df_outcome, df_stuck, by = "PeriodType") |>
+    filter(!is.na(NoS)) |>
+    mutate(Time_Category = if_else(Reference_Date < as.POSIXct("2021-10-01"), "Before Sep 2021", "After Sep 2021"))
+
+  # データテーブル表示
+  print(datatable(df_final |> rename(詰まり本数 = NoS)))
+
+  # プロット作成
+  p <- df_final |>
+    ggplot(aes(x = .data[[x_var]], y = NoS, color = Time_Category)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = TRUE) +
+    stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") +
+    geom_text(aes(label = PeriodType),
+              vjust = -1,
+              size = 3.5,
+              check_overlap = FALSE,
+              show.legend = FALSE) +
+    labs(x = x_label, y = "詰まり本数") +
+    theme_bw() +
+    theme(
+      axis.title = element_text(size = 14),
+      axis.text = element_text(size = 12)
+    ) +
+    expand_limits(y = max(df_final$NoS) * 1.1)
+
+  print(p)
+
+  # 回帰分析 (全体)
+  x_val <- as.matrix(df_final |> select(all_of(x_var)))
+  y_val <- as.matrix(df_final |> select(NoS))
+  reg <- lm(y_val ~ x_val)
+  print(summary(reg))
+
+  # 乖離幅の計算 (時期別)
+  stats_list <- list()
+
+  for (cat in unique(df_final$Time_Category)) {
+    df_sub <- df_final |> filter(Time_Category == cat)
+
+    if (nrow(df_sub) >= 3) {
+      # モデル作成
+      f <- as.formula(paste("NoS ~", x_var))
+      model <- lm(f, data = df_sub)
+
+      # 残差の最大値（絶対値）
+      resids <- residuals(model)
+      max_dev_val <- max(abs(resids))
+
+      # 全体本数(922本)に対する割合
+      pct_val <- (max_dev_val / 922) * 100
+
+      stats_list[[cat]] <- tibble(
+        Parameter = param_name,
+        Period = cat,
+        Max_Deviation = round(max_dev_val, 2),
+        Percentage_of_Total = round(pct_val, 2)
+      )
+    }
+  }
+
+  return(bind_rows(stats_list))
+}
+```
+
+## 使用データ
+
+```{r}
+source("pi_utils.R")
+
+# Tags needed for calculation
+tags <- c("M2FC4403.PV", "M2TI4405.PV", "M2PI4410W.PV", "M2PI4407.PV", "M2PI4411W.PV")
+
+all_data <- data.frame()
+start_time <- "2021-02-01T00:00:00Z"
+
+# Fetch Data
+for (tag in tags) {
+  web_id <- get_web_id(tag)
+  if (!is.null(web_id)) {
+    # Fetching interpolated data (daily)
+    d <- get_interpolated_data(web_id, tag, start_time = start_time, end_time = "*", interval = "24h")
+    if (!is.null(d)) {
+      all_data <- bind_rows(all_data, d)
+    }
+  }
+}
+
+if (nrow(all_data) > 0) {
+  # Align Data: Daily data
+  df_wide <- all_data |>
+    mutate(Timestamp = with_tz(Timestamp, tzone = "UTC")) |>
+    mutate(Timestamp = floor_date(Timestamp, "day")) |>
+    group_by(Timestamp, Tag) |>
+    summarize(Value = mean(Value, na.rm = TRUE), .groups = "drop") |>
+    pivot_wider(names_from = Tag, values_from = Value)
+
+  # Calculate U based on U_Calculation_Method.md
+  # Mapping:
+  # M2FC4403.PV -> steam_flow
+  # M2TI4405.PV -> t1 (inlet temp)
+  # M2PI4410W.PV -> jacket_P
+  # M2PI4407.PV -> pump_inlet_raw
+  # M2PI4411W.PV -> pump_outlet_raw
+
+  # Check if all columns exist (might be missing if fetch failed for some)
+  cols_needed <- tags
+  if (all(cols_needed %in% names(df_wide))) {
+    
+    df_calc <- df_wide |>
+      rename(
+        steam_flow = `M2FC4403.PV`,
+        t1 = `M2TI4405.PV`,
+        jacket_P = `M2PI4410W.PV`,
+        pump_inlet_raw = `M2PI4407.PV`,
+        pump_outlet_raw = `M2PI4411W.PV`
+      ) |>
+      mutate(
+        # Constants
+        steam_latent_heat = 2257.05,
+        
+        # Step 1: Heat q
+        q = steam_flow * steam_latent_heat * 1000 / 3600 / 1000,
+        
+        # Step 2: Pump Flow
+        # pump_inlet (kPa)
+        pump_inlet = (pump_inlet_raw / 760 * 101.325) + (950 * 9.81 * (1.4 + 6.125) / 1000),
+        
+        # pump_outlet (kPa abs) = gauge + 101.325
+        pump_outlet_abs = pump_outlet_raw + 101.325,
+        
+        # lifting_height (m)
+        lifting_height = (pump_outlet_abs - pump_inlet) * 1000 / 9.81 / 950,
+        
+        # pump_flow
+        x = lifting_height,
+        pump_flow = (-0.6857 * x^2 + 0.8571 * x + 43.589) * 60 * 950 / 1000,
+        
+        # Step 3: Temps
+        # t2 calculation
+        t2 = t1 + q * 1000 / (pump_flow * 1000 / 3600) / 2.09,
+        
+        # t3_t4 calculation
+        t3_t4 = 27.838 * log(jacket_P + 101.325) - 28.559,
+        
+        dT1 = t3_t4 - t1,
+        dT2 = t3_t4 - t2,
+        
+        # LMTD
+        delta_tlm = (dT1 - dT2) / log(dT1 / dT2),
+        
+        # Step 4: U
+        U = (q * 1000 * 1000 / 367) / delta_tlm
+      )
+      
+    df_raw <- df_calc |>
+      select(Timestamp, U, jacket_P, pump_outlet = pump_outlet_raw) |>
+      filter(Timestamp >= as.POSIXct("2021-02-01 00:00:00")) |>
+      mutate(
+        Period = case_when(
+          Timestamp >= as.POSIXct("2021-03-13") & Timestamp <= as.POSIXct("2021-09-08") ~ "2103",
+          Timestamp >= as.POSIXct("2021-10-04") & Timestamp <= as.POSIXct("2022-04-13") ~ "2109",
+          Timestamp >= as.POSIXct("2022-07-03") & Timestamp <= as.POSIXct("2023-01-26") ~ "2206",
+          Timestamp >= as.POSIXct("2023-02-16") & Timestamp <= as.POSIXct("2023-09-19") ~ "2302",
+          Timestamp >= as.POSIXct("2023-10-21") & Timestamp <= as.POSIXct("2024-04-12") ~ "2310",
+          Timestamp >= as.POSIXct("2024-04-13") & Timestamp <= as.POSIXct("2025-06-30") ~ "2404",
+          Timestamp >= as.POSIXct("2025-07-01") ~ "2502",
+          TRUE ~ NA_character_
+        )
+      ) |>
+      filter(!is.na(Period)) # Remove data outside defined periods
+      
+  } else {
+    warning("Missing some required PI tags in fetched data.")
+    df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric(), Period = character())
+  }
+} else {
+  warning("No PI Data fetched. Using empty structure.")
+  df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric())
+}
+
+df_Stuck <- read_xlsx("data/NoS_20251201.xlsx", sheet = 1)
+df_Stuck <- df_Stuck |>
+  filter(Period != "2502") |>
+  mutate(PeriodType = str_c(Period, `b/e`, sep = "_")) # 結合キーをここで作成
+```
+
+## データ読み込み
+
+### 時系列データ
+
+```{r, echo=FALSE}
+datatable(df_raw)
+```
+
+### 詰まりデータ
+
+```{r}
+datatable(df_Stuck |> rename(詰まり本数 = NoS))
+```
+
+## パラメータ推移
+
+各パラメータ（U値、ジャケット圧、ポンプ圧）の推移を時系列グラフで確認する。
+
+### U値
+
+```{r}
+# 欠損値を除去してxtsオブジェクトを作成（可視化のため）
+df_u <- df_raw |> select(Timestamp, U) |> filter(!is.na(U))
+
+if (nrow(df_u) > 1) {
+  u_xts <- xts(df_u$U, order.by = df_u$Timestamp)
+  
+  dygraph(u_xts, main = "U Value Trend") |>
+    dyRangeSelector() |>
+    dyOptions(colors = "blue")
+} else {
+  print("No data available for U-value trend.")
+}
+```
+
+### ジャケット圧
+
+```{r}
+df_jp <- df_raw |> select(Timestamp, jacket_P) |> filter(!is.na(jacket_P))
+
+if (nrow(df_jp) > 1) {
+  jp_xts <- xts(df_jp$jacket_P, order.by = df_jp$Timestamp)
+  
+  dygraph(jp_xts, main = "Jacket Pressure Trend") |>
+    dyRangeSelector() |>
+    dyOptions(colors = "green")
+} else {
+  print("No data available for Jacket Pressure trend.")
+}
+```
+
+### ポンプ圧
+
+```{r}
+df_pump <- df_raw |> select(Timestamp, pump_outlet) |> filter(!is.na(pump_outlet))
+
+if (nrow(df_pump) > 1) {
+  pump_xts <- xts(df_pump$pump_outlet, order.by = df_pump$Timestamp)
+  
+  dygraph(pump_xts, main = "Pump Outlet Pressure Trend") |>
+    dyRangeSelector() |>
+    dyOptions(colors = "red")
+} else {
+  print("No data available for Pump Outlet Pressure trend.")
+}
+```
+
+## データ加工と分析
+
+各パラメータ（U値、ジャケット圧、ポンプ圧）について、キャンペーンの初期・末期の最大値を抽出し、詰まり本数（NoS）との相関を分析する。
+
+### Case1) UA
+
+U値の最大値からUAを算出し、相関を確認する。
+
+```{r}
+# 結果格納用リスト
+summary_results <- list()
+
+# 1. データ抽出
+df_outcome_u <- get_campaign_max(df_raw, "U")
+
+# 2. UA列の追加 (Max_U * 367)
+df_outcome_u <- df_outcome_u |>
+  mutate(UA = Max_Value * 367)
+
+# 3. 分析実行
+summary_results[["UA"]] <- analyze_and_report(df_outcome_u, df_Stuck, "UA", "UA", "UA")
+```
+
+### Case2) ジャケット圧
+
+ジャケット圧（jacket_P）の最大値と詰まり本数の相関を確認する。
+
+```{r}
+# 1. データ抽出
+df_outcome_jacket <- get_campaign_max(df_raw, "jacket_P")
+
+# 2. 分析実行
+summary_results[["JacketP"]] <- analyze_and_report(df_outcome_jacket, df_Stuck, "Max_Value", "JacketP", "Jacket Pressure")
+```
+
+### Case3) ポンプ圧
+
+ポンプ吐出圧（pump_outlet）の最大値と詰まり本数の相関を確認する。
+
+```{r}
+# 1. データ抽出
+df_outcome_pump <- get_campaign_max(df_raw, "pump_outlet")
+
+# 2. 分析実行
+summary_results[["PumpP"]] <- analyze_and_report(df_outcome_pump, df_Stuck, "Max_Value", "Max_P", "Pump Pressure")
+```
+
+### 評価
+
+本分析の結果、各パラメータと詰まり本数の間に一定の相関傾向が確認された。特に2021年9月以前と以後で傾向に違いが見られるケースがあるため、時期を考慮した監視が重要であると考えられる。
+
+### 乖離幅の分析まとめ
+
+予測式との乖離幅が最も大きいプロットについて、全体本数（922本）に対する割合を以下に示す。
+
+```{r}
+final_summary <- bind_rows(summary_results)
+final_summary |>
+  datatable(caption = "Max Deviation and Percentage by Parameter and Period")
+```
