@@ -1,13 +1,13 @@
 ---
-title: "Analysis_1st"
+title: "M1E-4410 性能評価およびチューブ閉塞分析レポート"
 author: "Ryuta"
-date: "2026-01-05"
+date: "`r Sys.Date()`"
 output: html_document
 ---
 
 # 目的
 
-熱交換器の詰まり本数と各運転パラメータ（U値、ジャケット圧、ポンプ圧）の相関関係を分析し、詰まりの発生要因を特定することを目的とする。
+M1粗MAA分離塔リボイラー（M1E-4410）の詰まり本数と各運転パラメータ（U値、ジャケット圧、ポンプ圧）の相関関係を分析し、詰まりの発生要因を特定することを目的とする。
 
 ```{r install_packages, message=FALSE, warning=FALSE, include=FALSE, cache=TRUE}
 ## 環境構築
@@ -151,7 +151,7 @@ analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label, param_name)
 source("pi_utils.R")
 
 # Tags needed for calculation
-tags <- c("M2FC4403.PV", "M2TI4405.PV", "M2PI4410W.PV", "M2PI4407.PV", "M2PI4411W.PV")
+tags <- c("M1FC4403.PV", "M1TI4405.PV", "M1PI4412.PV", "M1PI4407.PV", "M1PI4411.PV")
 
 all_data <- data.frame()
 start_time <- "2021-02-01T00:00:00Z"
@@ -177,26 +177,19 @@ if (nrow(all_data) > 0) {
     summarize(Value = mean(Value, na.rm = TRUE), .groups = "drop") |>
     pivot_wider(names_from = Tag, values_from = Value)
 
-  # Calculate U based on U_Calculation_Method.md
-  # Mapping:
-  # M2FC4403.PV -> steam_flow
-  # M2TI4405.PV -> t1 (inlet temp)
-  # M2PI4410W.PV -> jacket_P
-  # M2PI4407.PV -> pump_inlet_raw
-  # M2PI4411W.PV -> pump_outlet_raw
-
-  # Check if all columns exist (might be missing if fetch failed for some)
+  # Check if all columns exist
   cols_needed <- tags
   if (all(cols_needed %in% names(df_wide))) {
     
     df_calc <- df_wide |>
       rename(
-        steam_flow = `M2FC4403.PV`,
-        t1 = `M2TI4405.PV`,
-        jacket_P = `M2PI4410W.PV`,
-        pump_inlet_raw = `M2PI4407.PV`,
-        pump_outlet_raw = `M2PI4411W.PV`
+        steam_flow = `M1FC4403.PV`,
+        t1 = `M1TI4405.PV`,
+        jacket_P = `M1PI4412.PV`,
+        pump_inlet_raw = `M1PI4407.PV`,
+        pump_outlet_raw = `M1PI4411.PV`
       ) |>
+      filter(steam_flow > 0.5, t1 > 50, pump_outlet_raw > -50, pump_inlet_raw > 0) |>
       mutate(
         # Constants
         steam_latent_heat = 2257.05,
@@ -233,7 +226,8 @@ if (nrow(all_data) > 0) {
         
         # Step 4: U
         U = (q * 1000 * 1000 / 367) / delta_tlm
-      )
+      ) |>
+      filter(U > 100, U < 3000, delta_tlm > 0.5)
       
     df_raw <- df_calc |>
       select(Timestamp, U, jacket_P, pump_outlet = pump_outlet_raw) |>
@@ -261,10 +255,9 @@ if (nrow(all_data) > 0) {
   df_raw <- tibble(Timestamp = as.POSIXct(character()), U = numeric(), jacket_P = numeric(), pump_outlet = numeric())
 }
 
-df_Stuck <- read_xlsx("data/NoS_20251201.xlsx", sheet = 1)
-df_Stuck <- df_Stuck |>
-  filter(Period != "2502") |>
-  mutate(PeriodType = str_c(Period, `b/e`, sep = "_")) # 結合キーをここで作成
+df_Stuck <- read.csv("data/NoS_M1E_4410.csv") |>
+  rename(`b/e` = b_e) |>
+  mutate(PeriodType = str_c(Period, `b/e`, sep = "_"))
 ```
 
 ## データ読み込み
