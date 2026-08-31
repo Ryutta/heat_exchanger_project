@@ -129,8 +129,8 @@ analyze_and_report <- function(df_outcome, df_stuck, x_var, x_label, param_name)
       resids <- residuals(model)
       max_dev_val <- max(abs(resids))
 
-      # 全体本数(922本)に対する割合
-      pct_val <- (max_dev_val / 922) * 100
+      # 全体本数(1064本)に対する割合
+      pct_val <- (max_dev_val / 1064) * 100
 
       stats_list[[cat]] <- tibble(
         Parameter = param_name,
@@ -380,7 +380,7 @@ summary_results[["PumpP"]] <- analyze_and_report(df_outcome_pump, df_Stuck, "Max
 
 ### 乖離幅の分析まとめ
 
-予測式との乖離幅が最も大きいプロットについて、全体本数（922本）に対する割合を以下に示す。
+予測式との乖離幅が最も大きいプロットについて、全体本数（1064本）に対する割合を以下に示す。
 
 ```{r}
 final_summary <- bind_rows(summary_results)
