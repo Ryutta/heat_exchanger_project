@@ -193,23 +193,24 @@ if (nrow(all_data) > 0) {
       mutate(
         # Constants
         steam_latent_heat = 2257.05,
+        density_liquid = 982, # 比重 0.982 (P-4411仕様図面より)
         
         # Step 1: Heat q
         q = steam_flow * steam_latent_heat * 1000 / 3600 / 1000,
         
-        # Step 2: Pump Flow
+        # Step 2: Pump Flow (P-4411 500SCQ-EX 性能曲線より)
         # pump_inlet (kPa)
-        pump_inlet = (pump_inlet_raw / 760 * 101.325) + (950 * 9.81 * (1.4 + 6.125) / 1000),
+        pump_inlet = (pump_inlet_raw / 760 * 101.325) + (density_liquid * 9.81 * (1.4 + 6.125) / 1000),
         
         # pump_outlet (kPa abs) = gauge + 101.325
         pump_outlet_abs = pump_outlet_raw + 101.325,
         
         # lifting_height (m)
-        lifting_height = (pump_outlet_abs - pump_inlet) * 1000 / 9.81 / 950,
+        lifting_height = (pump_outlet_abs - pump_inlet) * 1000 / 9.81 / density_liquid,
         
-        # pump_flow
+        # pump_flow (t/h) : P-4411 性能曲線二次近似
         x = lifting_height,
-        pump_flow = (-0.6857 * x^2 + 0.8571 * x + 43.589) * 60 * 950 / 1000,
+        pump_flow = (-0.6868 * x^2 + 4.0434 * x + 42.5505) * 60 * density_liquid / 1000,
         
         # Step 3: Temps
         # t2 calculation
